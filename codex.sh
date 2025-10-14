@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script version
-SCRIPT_VERSION="1.0.3"
+SCRIPT_VERSION="1.0.4"
 
 # System configuration
 SUPPORTED_OS="Linux"
@@ -113,7 +113,7 @@ update_codex() {
     fi
 
     if [ -f "${BASHRC_PATH}" ]; then
-        if ! grep -q "export PATH.*${INSTALL_DIR}" "${BASHRC_PATH}"; then
+        if ! grep -q "# Added by codex.sh" "${BASHRC_PATH}"; then
             echo "" >> "${BASHRC_PATH}"
             echo "# Added by codex.sh" >> "${BASHRC_PATH}"
             echo "export PATH=\"${INSTALL_DIR}:\$PATH\"" >> "${BASHRC_PATH}"
