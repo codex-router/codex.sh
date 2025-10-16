@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script version
-SCRIPT_VERSION="1.0.4"
+SCRIPT_VERSION="1.1.0"
 
 # System configuration
 SUPPORTED_OS="Linux"
@@ -69,6 +69,19 @@ query_config() {
         echo "$response" | grep -o '"/config\.toml\.[^"]*"' | sed 's|"/config\.toml\.\([^"]*\)"|\1|' | sort
     else
         echo -e "ERROR: Unable to query configuration information"
+        return 1
+    fi
+}
+
+# Query MCP
+query_mcp() {
+    local response
+
+    response=$(curl -s -u "${ARTIFACTORY_USER}":"${ARTIFACTORY_PASS}" "${ARTIFACTORY_HOST}/api/storage/${ARTIFACTORY_CODEX}")
+    if [ $? -eq 0 ]; then
+        echo "$response" | grep -o '"/mcp_servers\.toml\.[^"]*"' | sed 's|"/mcp_servers\.toml\.\([^"]*\)"|\1|' | sort
+    else
+        echo -e "ERROR: Unable to query MCP configuration information"
         return 1
     fi
 }
@@ -153,8 +166,25 @@ update_model() {
 
 # Update MCP
 update_mcp() {
-    # TODO: FIXME
-    echo -e "INFO: MCP update not supported"
+    local available_mcps
+
+    if [ ! -d "${CONFIG_DIR}" ]; then
+        mkdir -p "${CONFIG_DIR}"
+    fi
+
+    available_mcps=$(query_mcp)
+    if [ $? -ne 0 ] || [ -z "$available_mcps" ]; then
+        exit 1
+    fi
+
+    for item in $available_mcps; do
+        local mcp_config_file="${CONFIG_DIR}/mcp_servers.toml.${item}"
+        if curl -k -u "${ARTIFACTORY_USER}":"${ARTIFACTORY_PASS}" -L "${ARTIFACTORY_URL}/mcp_servers.toml.$item" -o "$mcp_config_file" -s; then
+            echo -e "DONE: MCP configuration $item saved to: $mcp_config_file"
+        else
+            echo -e "ERROR: Failed to download MCP configuration $item"
+        fi
+    done
 }
 
 # Update Agent
@@ -183,8 +213,34 @@ set_model() {
 
 # Set MCP
 set_mcp() {
-    # TODO: FIXME
-    echo -e "INFO: MCP setting not supported"
+    if [ -z "$1" ]; then
+        echo -e "ERROR: MCP configuration name is required"
+        return 1
+    fi
+
+    if [ ! -f "${CONFIG_FILE}" ]; then
+        echo -e "ERROR: Main configuration file not found: ${CONFIG_FILE}"
+        echo -e "INFO: Run 'codex.sh model' to set a model first"
+        return 1
+    fi
+
+    local mcp_config_file="${CONFIG_DIR}/mcp_servers.toml.${1}"
+
+    if [ ! -f "$mcp_config_file" ]; then
+        echo -e "ERROR: MCP configuration file not found: $mcp_config_file"
+        echo -e "\033[32mINFO: Run 'codex.sh mcp' to see available MCP configurations or 'codex.sh update' to download MCP configurations\033[0m"
+        return 1
+    fi
+
+    local temp_config="/tmp/codex_config_$(date +%s).toml"
+
+    grep -v '^\[mcp_servers\.' "${CONFIG_FILE}" > "$temp_config" 2>/dev/null || true
+
+    cat "$mcp_config_file" >> "$temp_config"
+
+    mv "$temp_config" "${CONFIG_FILE}"
+    echo -e "DONE: MCP configuration ${1} applied to: ${CONFIG_FILE}"
+    echo -e "INFO: Make sure to set required environment variables for your MCP servers"
 }
 
 # Set Agent
@@ -230,8 +286,31 @@ delete_model() {
 
 # Delete MCP
 delete_mcp() {
-    # TODO: FIXME
-    echo -e "INFO: MCP deletion not supported"
+    if [ -d "${CONFIG_DIR}" ]; then
+        local deleted_count=0
+        for item in "${CONFIG_DIR}"/mcp_servers.toml.*; do
+            if [ -f "$item" ]; then
+                rm -f "$item"
+                deleted_count=$((deleted_count + 1))
+                echo -e "DONE: Deleted $(basename "$item")"
+            fi
+        done
+
+        if [ $deleted_count -eq 0 ]; then
+            echo -e "INFO: No MCP configuration files found to delete"
+        fi
+    fi
+
+    if [ -f "${CONFIG_FILE}" ]; then
+        local temp_config="/tmp/codex_config_$(date +%s).toml"
+        if grep -v '^\[mcp_servers\.' "${CONFIG_FILE}" > "$temp_config" 2>/dev/null; then
+            mv "$temp_config" "${CONFIG_FILE}"
+            echo -e "DONE: Removed MCP server configurations from: ${CONFIG_FILE}"
+        else
+            rm -f "$temp_config"
+            echo -e "INFO: No MCP configurations found in: ${CONFIG_FILE}"
+        fi
+    fi
 }
 
 # Delete Agent
@@ -304,8 +383,61 @@ list_model() {
 
 # List MCP
 list_mcp() {
-    # TODO: FIXME
-    echo -e "INFO: MCP listing not supported"
+    local mcp_name
+    local mcp_count=0
+    local current_mcp=""
+    local mcps=()
+
+    if [ ! -d "${CONFIG_DIR}" ]; then
+        echo -e "ERROR: Configuration directory not found, please run install or update first"
+        return 1
+    fi
+
+    if [ -f "${CONFIG_FILE}" ] && grep -q '^\[mcp_servers\.' "${CONFIG_FILE}"; then
+        current_mcp="(active)"
+    fi
+
+    for item in "${CONFIG_DIR}"/mcp_servers.toml.*; do
+        if [ -f "$item" ]; then
+            mcp_name=$(basename "$item" | sed 's/mcp_servers\.toml\.//')
+            mcp_count=$((mcp_count + 1))
+            mcps+=("$mcp_name")
+            if [ -n "$current_mcp" ]; then
+                echo -e "\033[32m   $mcp_count. $mcp_name (current MCP configuration)\033[0m"
+                current_mcp=""  # Only show current for first item
+            else
+                echo "   $mcp_count. $mcp_name"
+            fi
+        fi
+    done
+
+    if [ $mcp_count -eq 0 ]; then
+        echo -e "INFO: No downloaded MCP configuration files found"
+        echo -e "INFO: Please run 'install' or 'update' first to download MCP configurations"
+        return 1
+    fi
+
+    echo ""
+    echo "Enter MCP configuration number to set (1-$mcp_count), or press Enter to exit:"
+    read -r selection
+
+    if [ -z "$selection" ]; then
+        echo "No selection made, exiting."
+        return 0
+    fi
+
+    if ! [[ "$selection" =~ ^[0-9]+$ ]] || [ "$selection" -lt 1 ] || [ "$selection" -gt "$mcp_count" ]; then
+        echo -e "ERROR: Invalid selection. Please enter a number between 1 and $mcp_count"
+        return 1
+    fi
+
+    local selected_mcp="${mcps[$((selection - 1))]}"
+    if set_mcp "$selected_mcp"; then
+        echo -e "DONE: Set MCP configuration: $selected_mcp"
+    else
+        echo -e "ERROR: Failed to set MCP configuration $selected_mcp"
+        return 1
+    fi
 }
 
 # List Agent

@@ -1,0 +1,60 @@
+# MCP Server Configuration
+# Based on https://github.com/openai/codex/blob/main/docs/config.md
+
+# ============================================================================
+# STDIO MCP Servers
+# ============================================================================
+
+# Code2Prompt MCP Server - provides codebase-to-prompt conversion via Docker
+[mcp_servers.code2prompt]
+command = "docker"
+args = ["run", "--rm", "-v", "/path/to/projects:/workspaces/projects", "--network", "host", "code2prompt:4.0.2"]
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+enabled = false
+
+# Docker MCP Server - provides containerized project operations and orchestration
+[mcp_servers.docker]
+command = "docker"
+args = ["run", "--rm", "-p", "8000:8000", "docker:0.1.0"]
+env = {
+    "MCP_HOST" = "0.0.0.0",
+    "MCP_PORT" = "8000"
+}
+startup_timeout_sec = 15
+tool_timeout_sec = 90
+enabled = false
+
+# ============================================================================
+# Streamable HTTP MCP Servers
+# ============================================================================
+
+[mcp_servers.custom_api]
+url = "https://api.example.com/mcp"
+bearer_token_env_var = "CUSTOM_API_TOKEN"
+startup_timeout_sec = 10
+tool_timeout_sec = 60
+enabled = false
+
+# ============================================================================
+# Configuration Notes
+# ============================================================================
+
+# Environment Variables:
+# - Set required environment variables in your shell or .bashrc/.zshrc
+# - Use meaningful names that don't conflict with existing variables
+# - Keep sensitive tokens secure and never commit them to version control
+
+# Timeouts:
+# - startup_timeout_sec: Time to wait for server initialization (default: 10)
+# - tool_timeout_sec: Maximum time for individual tool execution (default: 60)
+
+# Security:
+# - Only enable servers you trust and need
+# - Review server permissions and capabilities
+# - Use environment variables for sensitive configuration
+
+# Performance:
+# - Disable unused servers with enabled = false
+# - Adjust timeouts based on server performance
+# - Monitor resource usage of active servers

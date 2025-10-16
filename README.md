@@ -53,15 +53,39 @@ Tip: Update the placeholder key in ~/.bashrc (LITELLM_API_KEY=sk-1234) to your r
 # Set a model
 ./codex.sh model <model_name>
 
+# List MCP servers and interactively pick one
+./codex.sh mcp
+
+# Set MCP server
+./codex.sh mcp <mcp_name>
+
 # Uninstall everything the script installed/added
 ./codex.sh uninstall
 ```
 
+## MCP Server Configuration
+
+The script supports Model Context Protocol (MCP) servers, which provide additional tools and capabilities to Codex:
+
+- MCP server configurations are downloaded during `install` or `update`
+- Configurations are stored in `~/.codex/mcp_servers.toml.*`
+- Use `./codex.sh mcp` to list available MCP configurations
+- Use `./codex.sh mcp <mcp_name>` to apply a configuration
+- MCP settings are merged into your active `config.toml`
+- Supported MCP types include STDIO servers (Docker-based) and HTTP servers
+
+Example MCP servers:
+- **code2prompt**: Converts codebase to prompts via Docker
+- **docker**: Provides containerized project operations
+- **custom_api**: HTTP-based MCP servers with bearer token authentication
+
+**Important**: After setting an MCP configuration, ensure you set any required environment variables (like API tokens) in your shell environment.
+
 ## WSL notes (Windows Subsystem for Linux)
 
 - Run the script inside your Linux (WSL) distro shell, not Windows PowerShell/cmd.
-- ~/.bashrc refers to your Linux home. Changes won’t affect Windows shells.
-- The script supports Linux only; running from Windows directly will show a “only supports Linux” message.
+- ~/.bashrc refers to your Linux home. Changes won't affect Windows shells.
+- The script supports Linux only; running from Windows directly will show a "only supports Linux" message.
 
 ## Troubleshooting
 
@@ -81,6 +105,12 @@ Tip: Update the placeholder key in ~/.bashrc (LITELLM_API_KEY=sk-1234) to your r
 
 - Model not listed or selection fails
 	- Re-run `./codex.sh update` to re-download models.
+
+- MCP configuration issues
+	- Ensure you've run `./codex.sh update` to download MCP configurations.
+	- Check that required environment variables (API tokens, etc.) are set.
+	- MCP servers require their respective tools (Docker for STDIO servers, network access for HTTP servers).
+	- Use `./codex.sh mcp` to see available configurations.
 
 - Self-upgrade issues
 	- `./codex.sh upgrade` compares SHA256 with the remote. If verification fails, the script restores your previous version and exits.
