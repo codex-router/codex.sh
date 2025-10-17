@@ -8,7 +8,7 @@
 # Code2Prompt MCP Server - provides codebase-to-prompt conversion via Docker
 [mcp_servers.code2prompt]
 command = "docker"
-args = ["run", "--rm", "-v", "/path/to/projects:/workspaces/projects", "--network", "host", "code2prompt:4.0.2"]
+args = ["run", "--rm", "-v", "${PWD}:/workspaces/projects", "code2prompt:4.0.2"]
 startup_timeout_sec = 20
 tool_timeout_sec = 120
 enabled = false
