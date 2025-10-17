@@ -63,19 +63,6 @@ Tip: Update the placeholder key in ~/.bashrc (LITELLM_API_KEY=sk-1234) to your r
 ./codex.sh uninstall
 ```
 
-## MCP Server Updates
-
-MCP (Model Context Protocol) server configurations are automatically managed:
-
-- **Automatic Updates**: MCP configurations are downloaded and updated whenever you run:
-  - `./codex.sh install` - Downloads MCP configurations during initial setup
-  - `./codex.sh update` - Refreshes all components including MCP configurations
-- **Configuration Location**: MCP configurations are stored in `~/.codex/mcp_servers.toml`
-- **Version Management**: The `update` command ensures you have the latest MCP server definitions from the repository
-- **No Manual Intervention**: You don't need to separately update MCP configurations - they're included in the standard update process
-
-If you encounter issues with MCP servers or need the latest configurations, simply run `./codex.sh update`.
-
 ## MCP Server Configuration
 
 The script supports Model Context Protocol (MCP) servers, which provide additional tools and capabilities to Codex:
