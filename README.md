@@ -63,16 +63,30 @@ Tip: Update the placeholder key in ~/.bashrc (LITELLM_API_KEY=sk-1234) to your r
 ./codex.sh uninstall
 ```
 
+## MCP Server Updates
+
+MCP (Model Context Protocol) server configurations are automatically managed:
+
+- **Automatic Updates**: MCP configurations are downloaded and updated whenever you run:
+  - `./codex.sh install` - Downloads MCP configurations during initial setup
+  - `./codex.sh update` - Refreshes all components including MCP configurations
+- **Configuration Location**: MCP configurations are stored in `~/.codex/mcp_servers.toml`
+- **Version Management**: The `update` command ensures you have the latest MCP server definitions from the repository
+- **No Manual Intervention**: You don't need to separately update MCP configurations - they're included in the standard update process
+
+If you encounter issues with MCP servers or need the latest configurations, simply run `./codex.sh update`.
+
 ## MCP Server Configuration
 
 The script supports Model Context Protocol (MCP) servers, which provide additional tools and capabilities to Codex:
 
-- MCP server configurations are downloaded during `install` or `update`
-- Configurations are stored in `~/.codex/mcp_servers.toml.*`
+- MCP server configurations are automatically downloaded during `install` or `update`
+- Configurations are stored in `~/.codex/mcp_servers.toml`
 - Use `./codex.sh mcp` to list available MCP configurations
 - Use `./codex.sh mcp <mcp_name>` to apply a configuration
 - MCP settings are merged into your active `config.toml`
 - Supported MCP types include STDIO servers (Docker-based) and HTTP servers
+- MCP configurations are automatically updated when running `./codex.sh update`
 
 Example MCP servers:
 - **code2prompt**: Converts codebase to prompts via Docker
@@ -107,10 +121,11 @@ Example MCP servers:
 	- Re-run `./codex.sh update` to re-download models.
 
 - MCP configuration issues
-	- Ensure you've run `./codex.sh update` to download MCP configurations.
+	- Ensure you've run `./codex.sh update` to download latest MCP configurations.
 	- Check that required environment variables (API tokens, etc.) are set.
 	- MCP servers require their respective tools (Docker for STDIO servers, network access for HTTP servers).
 	- Use `./codex.sh mcp` to see available configurations.
+	- If MCP configurations seem outdated, run `./codex.sh update` to refresh them from the repository.
 
 - Self-upgrade issues
 	- `./codex.sh upgrade` compares SHA256 with the remote. If verification fails, the script restores your previous version and exits.

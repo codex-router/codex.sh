@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script version
-SCRIPT_VERSION="1.1.0"
+SCRIPT_VERSION="1.1.0-rc.1"
 
 # System configuration
 SUPPORTED_OS="Linux"
@@ -79,7 +79,13 @@ query_mcp() {
 
     response=$(curl -s -u "${ARTIFACTORY_USER}":"${ARTIFACTORY_PASS}" "${ARTIFACTORY_HOST}/api/storage/${ARTIFACTORY_CODEX}")
     if [ $? -eq 0 ]; then
-        echo "$response" | grep -o '"/mcp_servers\.toml\.[^"]*"' | sed 's|"/mcp_servers\.toml\.\([^"]*\)"|\1|' | sort
+        if echo "$response" | grep -q '"/mcp_servers\.toml"'; then
+            echo "mcp_servers.toml"
+            return 0
+        else
+            echo -e "ERROR: MCP configuration file not found in repository"
+            return 1
+        fi
     else
         echo -e "ERROR: Unable to query MCP configuration information"
         return 1
@@ -166,25 +172,18 @@ update_model() {
 
 # Update MCP
 update_mcp() {
-    local available_mcps
-
     if [ ! -d "${CONFIG_DIR}" ]; then
         mkdir -p "${CONFIG_DIR}"
     fi
 
-    available_mcps=$(query_mcp)
-    if [ $? -ne 0 ] || [ -z "$available_mcps" ]; then
-        exit 1
-    fi
+    local mcp_config_file="${CONFIG_DIR}/mcp_servers.toml"
 
-    for item in $available_mcps; do
-        local mcp_config_file="${CONFIG_DIR}/mcp_servers.toml.${item}"
-        if curl -k -u "${ARTIFACTORY_USER}":"${ARTIFACTORY_PASS}" -L "${ARTIFACTORY_URL}/mcp_servers.toml.$item" -o "$mcp_config_file" -s; then
-            echo -e "DONE: MCP configuration $item saved to: $mcp_config_file"
-        else
-            echo -e "ERROR: Failed to download MCP configuration $item"
-        fi
-    done
+    if curl -k -u "${ARTIFACTORY_USER}":"${ARTIFACTORY_PASS}" -L "${ARTIFACTORY_URL}/mcp_servers.toml" -o "$mcp_config_file" -s; then
+        echo -e "DONE: MCP configuration saved to: $mcp_config_file"
+    else
+        echo -e "ERROR: Failed to download MCP configuration"
+        return 1
+    fi
 }
 
 # Update Agent
@@ -213,8 +212,11 @@ set_model() {
 
 # Set MCP
 set_mcp() {
-    if [ -z "$1" ]; then
-        echo -e "ERROR: MCP configuration name is required"
+    local mcp_servers="$1"
+    local temp_config
+
+    if [ -z "$mcp_servers" ]; then
+        echo -e "ERROR: MCP server name(s) required"
         return 1
     fi
 
@@ -224,22 +226,75 @@ set_mcp() {
         return 1
     fi
 
-    local mcp_config_file="${CONFIG_DIR}/mcp_servers.toml.${1}"
+    local mcp_config_file="${CONFIG_DIR}/mcp_servers.toml"
 
     if [ ! -f "$mcp_config_file" ]; then
         echo -e "ERROR: MCP configuration file not found: $mcp_config_file"
-        echo -e "\033[32mINFO: Run 'codex.sh mcp' to see available MCP configurations or 'codex.sh update' to download MCP configurations\033[0m"
+        echo -e "\033[32mINFO: Run 'codex.sh update' to download MCP configuration\033[0m"
         return 1
     fi
 
-    local temp_config="/tmp/codex_config_$(date +%s).toml"
+    temp_config="/tmp/codex_config_$(date +%s).toml"
 
-    grep -v '^\[mcp_servers\.' "${CONFIG_FILE}" > "$temp_config" 2>/dev/null || true
+    # Remove existing MCP server configurations completely
+    # Copy everything before the first [mcp_servers.* section
+    # Skip orphaned MCP configuration lines (command, args, env, etc.)
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^\[mcp_servers\. ]]; then
+            break
+        # Skip orphaned MCP config lines that might appear before any section header
+        elif [[ "$line" =~ ^(command|args|env|enabled|startup_timeout_sec|tool_timeout_sec)[[:space:]]*= ]]; then
+            continue
+        else
+            echo "$line" >> "$temp_config"
+        fi
+    done < "${CONFIG_FILE}"
 
-    cat "$mcp_config_file" >> "$temp_config"
+    # Parse comma-separated MCP server names
+    IFS=',' read -ra MCP_ARRAY <<< "$mcp_servers"
+
+    # Extract and append requested MCP server configurations
+    for mcp_name in "${MCP_ARRAY[@]}"; do
+        mcp_name=$(echo "$mcp_name" | xargs)  # Trim whitespace
+
+        if grep -q "^\[mcp_servers\.${mcp_name}\]" "$mcp_config_file"; then
+            echo "" >> "$temp_config"
+            # Extract the specific MCP server section and set enabled = true
+            local in_section=0
+            local section_started=0
+            while IFS= read -r line; do
+                if [[ "$line" =~ ^\[mcp_servers\.${mcp_name}\]$ ]]; then
+                    in_section=1
+                    section_started=0
+                    echo "$line" >> "$temp_config"
+                elif [ $in_section -eq 1 ]; then
+                    if [[ "$line" =~ ^\[.*\]$ ]]; then
+                        # Hit next section, stop
+                        break
+                    elif [[ "$line" =~ ^#.*MCP[[:space:]]Server ]] && [ $section_started -eq 1 ]; then
+                        # Hit comment line for next MCP server section, stop
+                        break
+                    elif [[ "$line" =~ ^enabled[[:space:]]*= ]]; then
+                        # Always set enabled = true for selected servers
+                        echo "enabled = true" >> "$temp_config"
+                        section_started=1
+                    else
+                        echo "$line" >> "$temp_config"
+                        # Mark that we've started writing content (not just the header)
+                        if [[ ! "$line" =~ ^[[:space:]]*$ ]] && [[ ! "$line" =~ ^# ]]; then
+                            section_started=1
+                        fi
+                    fi
+                fi
+            done < "$mcp_config_file"
+            echo -e "INFO: Added MCP server: $mcp_name"
+        else
+            echo -e "WARNING: MCP server '$mcp_name' not found in configuration"
+        fi
+    done
 
     mv "$temp_config" "${CONFIG_FILE}"
-    echo -e "DONE: MCP configuration ${1} applied to: ${CONFIG_FILE}"
+    echo -e "DONE: MCP configuration applied to: ${CONFIG_FILE}"
     echo -e "INFO: Make sure to set required environment variables for your MCP servers"
 }
 
@@ -286,23 +341,18 @@ delete_model() {
 
 # Delete MCP
 delete_mcp() {
-    if [ -d "${CONFIG_DIR}" ]; then
-        local deleted_count=0
-        for item in "${CONFIG_DIR}"/mcp_servers.toml.*; do
-            if [ -f "$item" ]; then
-                rm -f "$item"
-                deleted_count=$((deleted_count + 1))
-                echo -e "DONE: Deleted $(basename "$item")"
-            fi
-        done
+    local mcp_config_file="${CONFIG_DIR}/mcp_servers.toml"
 
-        if [ $deleted_count -eq 0 ]; then
-            echo -e "INFO: No MCP configuration files found to delete"
-        fi
+    if [ -f "$mcp_config_file" ]; then
+        rm -f "$mcp_config_file"
+        echo -e "DONE: Deleted MCP configuration file: $mcp_config_file"
+    else
+        echo -e "INFO: No MCP configuration file found to delete"
     fi
 
     if [ -f "${CONFIG_FILE}" ]; then
-        local temp_config="/tmp/codex_config_$(date +%s).toml"
+        local temp_config
+        temp_config="/tmp/codex_config_$(date +%s).toml"
         if grep -v '^\[mcp_servers\.' "${CONFIG_FILE}" > "$temp_config" 2>/dev/null; then
             mv "$temp_config" "${CONFIG_FILE}"
             echo -e "DONE: Removed MCP server configurations from: ${CONFIG_FILE}"
@@ -383,42 +433,78 @@ list_model() {
 
 # List MCP
 list_mcp() {
+    local mcp_config_file="${CONFIG_DIR}/mcp_servers.toml"
     local mcp_name
     local mcp_count=0
-    local current_mcp=""
+    local active_mcps=()
     local mcps=()
+    local mcp_enabled_status=()
 
-    if [ ! -d "${CONFIG_DIR}" ]; then
-        echo -e "ERROR: Configuration directory not found, please run install or update first"
+    if [ ! -f "$mcp_config_file" ]; then
+        echo -e "ERROR: MCP configuration file not found: $mcp_config_file"
+        echo -e "INFO: Please run 'install' or 'update' first to download MCP configuration"
         return 1
     fi
 
-    if [ -f "${CONFIG_FILE}" ] && grep -q '^\[mcp_servers\.' "${CONFIG_FILE}"; then
-        current_mcp="(active)"
+    # Get list of active MCP servers from main config
+    if [ -f "${CONFIG_FILE}" ]; then
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^\[mcp_servers\.([^]]+)\] ]]; then
+                active_mcps+=("${BASH_REMATCH[1]}")
+            fi
+        done < "${CONFIG_FILE}"
     fi
 
-    for item in "${CONFIG_DIR}"/mcp_servers.toml.*; do
-        if [ -f "$item" ]; then
-            mcp_name=$(basename "$item" | sed 's/mcp_servers\.toml\.//')
-            mcp_count=$((mcp_count + 1))
-            mcps+=("$mcp_name")
+    # Parse available MCP servers from mcp_servers.toml and check enabled status
+    local current_mcp=""
+    local current_enabled="false"
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^\[mcp_servers\.([^]]+)\] ]]; then
+            # Save previous MCP if exists
             if [ -n "$current_mcp" ]; then
-                echo -e "\033[32m   $mcp_count. $mcp_name (current MCP configuration)\033[0m"
-                current_mcp=""  # Only show current for first item
-            else
-                echo "   $mcp_count. $mcp_name"
+                mcps+=("$current_mcp")
+                mcp_enabled_status+=("$current_enabled")
             fi
+            # Start new MCP section
+            mcp_name="${BASH_REMATCH[1]}"
+            current_mcp="$mcp_name"
+            current_enabled="false"
+            mcp_count=$((mcp_count + 1))
+        elif [[ "$line" =~ ^enabled[[:space:]]*=[[:space:]]*(true|false) ]]; then
+            current_enabled="${BASH_REMATCH[1]}"
+        fi
+    done < "$mcp_config_file"
+
+    # Save last MCP
+    if [ -n "$current_mcp" ]; then
+        mcps+=("$current_mcp")
+        mcp_enabled_status+=("$current_enabled")
+    fi
+
+    if [ $mcp_count -eq 0 ]; then
+        echo -e "INFO: No MCP servers found in configuration file"
+        return 1
+    fi
+
+    # Display MCP servers with status
+    for i in "${!mcps[@]}"; do
+        local idx=$((i + 1))
+        local name="${mcps[$i]}"
+        local is_enabled=false
+        # Check if this MCP is in main config (this determines enabled status)
+        if [[ " ${active_mcps[*]} " =~ " ${name} " ]]; then
+            is_enabled=true
+        fi
+
+        if [ "$is_enabled" = true ]; then
+            echo -e "\033[32m   $idx. $name (enabled)\033[0m"
+        else
+            echo "   $idx. $name"
         fi
     done
 
-    if [ $mcp_count -eq 0 ]; then
-        echo -e "INFO: No downloaded MCP configuration files found"
-        echo -e "INFO: Please run 'install' or 'update' first to download MCP configurations"
-        return 1
-    fi
-
     echo ""
-    echo "Enter MCP configuration number to set (1-$mcp_count), or press Enter to exit:"
+    echo "Enter MCP server number(s) to enable (e.g., 1 or 1,3,5), or press Enter to exit:"
     read -r selection
 
     if [ -z "$selection" ]; then
@@ -426,16 +512,27 @@ list_mcp() {
         return 0
     fi
 
-    if ! [[ "$selection" =~ ^[0-9]+$ ]] || [ "$selection" -lt 1 ] || [ "$selection" -gt "$mcp_count" ]; then
-        echo -e "ERROR: Invalid selection. Please enter a number between 1 and $mcp_count"
-        return 1
-    fi
+    # Convert selection numbers to MCP names
+    local selected_names=()
+    IFS=',' read -ra SELECTIONS <<< "$selection"
 
-    local selected_mcp="${mcps[$((selection - 1))]}"
-    if set_mcp "$selected_mcp"; then
-        echo -e "DONE: Set MCP configuration: $selected_mcp"
+    for sel in "${SELECTIONS[@]}"; do
+        sel=$(echo "$sel" | xargs)  # Trim whitespace
+        if ! [[ "$sel" =~ ^[0-9]+$ ]] || [ "$sel" -lt 1 ] || [ "$sel" -gt "$mcp_count" ]; then
+            echo -e "ERROR: Invalid selection: $sel. Please enter numbers between 1 and $mcp_count"
+            return 1
+        fi
+        selected_names+=("${mcps[$((sel - 1))]}")
+    done
+
+    # Join array elements with comma
+    local mcp_list
+    mcp_list=$(IFS=,; echo "${selected_names[*]}")
+
+    if set_mcp "$mcp_list"; then
+        echo -e "DONE: Enabled MCP servers: $mcp_list"
     else
-        echo -e "ERROR: Failed to set MCP configuration $selected_mcp"
+        echo -e "ERROR: Failed to enable MCP servers"
         return 1
     fi
 }
@@ -546,6 +643,39 @@ show_info() {
         echo "   Not installed"
     fi
 
+    echo -e "\nCurrent Configuration:"
+    # Show current model
+    if [ -L "${CONFIG_FILE}" ] && [ -f "${CONFIG_FILE}" ]; then
+        local current_config_file
+        current_config_file=$(readlink "${CONFIG_FILE}")
+        if [ -n "$current_config_file" ]; then
+            local current_model
+            current_model=$(basename "$current_config_file" | sed 's/config\.toml\.//')
+            echo "   Current model: ${current_model}"
+        else
+            echo "   Current model: Not set"
+        fi
+    else
+        echo "   Current model: Not set"
+    fi
+
+    # Show enabled MCP servers
+    if [ -f "${CONFIG_FILE}" ]; then
+        local active_mcps=()
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^\[mcp_servers\.([^]]+)\] ]]; then
+                active_mcps+=("${BASH_REMATCH[1]}")
+            fi
+        done < "${CONFIG_FILE}"
+        if [ ${#active_mcps[@]} -gt 0 ]; then
+            echo "   Enabled MCP servers: ${active_mcps[*]}"
+        else
+            echo "   Enabled MCP servers: None"
+        fi
+    else
+        echo "   Enabled MCP servers: None"
+    fi
+
     echo -e "\nSystem Information:"
     if check_system; then
         echo "   Compatible system: ${SUPPORTED_OS}"
@@ -583,17 +713,17 @@ Options:
     help                         Show help information
 
 Examples:
-    $0 install             Install Codex CLI (default model: ${DEFAULT_MODEL})
-    $0 install kimi-k2     Install Codex CLI and set model
-    $0 uninstall           Uninstall Codex CLI
-    $0 update              Update Codex CLI
-    $0 info                Show Codex CLI installation information
-    $0 model               Show LLM model list
-    $0 model kimi-k2       Set LLM model to kimi-k2
-    $0 mcp                 Show MCP service list
-    $0 mcp filesystem,git  Set MCP services to filesystem and git
-    $0 agent               Show Agent template list
-    $0 agent android       Set Agent template to android
+    $0 install          Install Codex CLI (default model: ${DEFAULT_MODEL})
+    $0 install kimi-k2  Install Codex CLI and set model
+    $0 uninstall        Uninstall Codex CLI
+    $0 update           Update Codex CLI
+    $0 info             Show Codex CLI installation information
+    $0 model            Show LLM model list
+    $0 model kimi-k2    Set LLM model to kimi-k2
+    $0 mcp              Show MCP service list
+    $0 mcp gerrit,git   Set MCP services to gerrit and git
+    $0 agent            Show Agent template list
+    $0 agent android    Set Agent template to android
 EOF
 }
 
@@ -680,9 +810,12 @@ main() {
                 list_mcp
                 exit 0
             fi
-            shift 2
-            set_mcp "$2"
-            echo -e "DONE: Set MCP services: $1"
+            if set_mcp "$2"; then
+                echo -e "DONE: Set MCP services: $2"
+            else
+                echo -e "ERROR: Failed to set MCP services"
+                exit 1
+            fi
             ;;
         agent)
             if [ -z "$2" ]; then

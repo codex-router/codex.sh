@@ -11,7 +11,6 @@ command = "docker"
 args = ["run", "--rm", "-v", "${PWD}:/workspaces/projects", "code2prompt:4.0.2"]
 startup_timeout_sec = 20
 tool_timeout_sec = 120
-enabled = false
 
 # Docker MCP Server - provides containerized project operations and orchestration
 [mcp_servers.docker]
@@ -23,7 +22,6 @@ env = {
 }
 startup_timeout_sec = 15
 tool_timeout_sec = 90
-enabled = false
 
 # ============================================================================
 # Streamable HTTP MCP Servers
@@ -34,7 +32,6 @@ url = "https://api.example.com/mcp"
 bearer_token_env_var = "CUSTOM_API_TOKEN"
 startup_timeout_sec = 10
 tool_timeout_sec = 60
-enabled = false
 
 # ============================================================================
 # Configuration Notes
