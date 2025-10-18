@@ -1,4 +1,4 @@
-# codex.sh
+# Codex Script for Shell
 
 This is a one-stop installer and manager for the Codex CLI and its model configurations on Linux.
 
