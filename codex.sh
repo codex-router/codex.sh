@@ -236,6 +236,12 @@ set_mcp() {
 
     temp_config="/tmp/codex_config_$(date +%s).toml"
 
+    # If CONFIG_FILE is a symlink, resolve it to the actual file and preserve the symlink
+    local actual_config_file="${CONFIG_FILE}"
+    if [ -L "${CONFIG_FILE}" ]; then
+        actual_config_file=$(readlink -f "${CONFIG_FILE}")
+    fi
+
     # Remove existing MCP server configurations completely
     # Copy everything before the first [mcp_servers.* section
     # Skip orphaned MCP configuration lines (command, args, env, etc.)
@@ -248,7 +254,7 @@ set_mcp() {
         else
             echo "$line" >> "$temp_config"
         fi
-    done < "${CONFIG_FILE}"
+    done < "${actual_config_file}"
 
     # Parse comma-separated MCP server names
     IFS=',' read -ra MCP_ARRAY <<< "$mcp_servers"
@@ -293,9 +299,44 @@ set_mcp() {
         fi
     done
 
-    mv "$temp_config" "${CONFIG_FILE}"
+    mv "$temp_config" "${actual_config_file}"
     echo -e "DONE: MCP configuration applied to: ${CONFIG_FILE}"
     echo -e "INFO: Make sure to set required environment variables for your MCP servers"
+}
+
+# Disable all MCP servers
+disable_all_mcp() {
+    if [ ! -f "${CONFIG_FILE}" ]; then
+        echo -e "ERROR: Main configuration file not found: ${CONFIG_FILE}"
+        return 1
+    fi
+
+    local temp_config
+    temp_config="/tmp/codex_config_$(date +%s).toml"
+
+    # If CONFIG_FILE is a symlink, resolve it to the actual file and preserve the symlink
+    local actual_config_file="${CONFIG_FILE}"
+    if [ -L "${CONFIG_FILE}" ]; then
+        actual_config_file=$(readlink -f "${CONFIG_FILE}")
+    fi
+
+    # Remove all MCP server configurations completely
+    # Copy everything before the first [mcp_servers.* section
+    # Skip orphaned MCP configuration lines (command, args, env, etc.)
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^\[mcp_servers\. ]]; then
+            break
+        # Skip orphaned MCP config lines that might appear before any section header
+        elif [[ "$line" =~ ^(command|args|env|enabled|startup_timeout_sec|tool_timeout_sec)[[:space:]]*= ]]; then
+            continue
+        else
+            echo "$line" >> "$temp_config"
+        fi
+    done < "${actual_config_file}"
+
+    mv "$temp_config" "${actual_config_file}"
+    echo -e "INFO: All MCP servers have been disabled"
+    return 0
 }
 
 # Set Agent
@@ -504,11 +545,23 @@ list_mcp() {
     done
 
     echo ""
-    echo "Enter MCP server number(s) to enable (e.g., 1 or 1,3,5), or press Enter to exit:"
+    echo "Enter MCP server number(s) to enable (e.g., 1 or 1,3,5),"
+    echo "enter 0 to disable all MCP servers, or press Enter to exit:"
     read -r selection
 
     if [ -z "$selection" ]; then
         echo "No selection made, exiting."
+        return 0
+    fi
+
+    # Check for disable all option
+    if [ "$selection" = "0" ]; then
+        if disable_all_mcp; then
+            echo -e "DONE: Disabled all MCP servers"
+        else
+            echo -e "ERROR: Failed to disable MCP servers"
+            return 1
+        fi
         return 0
     fi
 
@@ -645,16 +698,29 @@ show_info() {
 
     echo -e "\nCurrent Configuration:"
     # Show current model
+    local current_model=""
+
     if [ -L "${CONFIG_FILE}" ] && [ -f "${CONFIG_FILE}" ]; then
+        # CONFIG_FILE is a symlink - try to extract model name from symlink target filename
         local current_config_file
         current_config_file=$(readlink "${CONFIG_FILE}")
         if [ -n "$current_config_file" ]; then
-            local current_model
-            current_model=$(basename "$current_config_file" | sed 's/config\.toml\.//')
-            echo "   Current model: ${current_model}"
-        else
-            echo "   Current model: Not set"
+            # Extract model name from symlink target (handle both relative and absolute paths)
+            current_model=$(basename "$current_config_file" | sed 's/^config\.toml\.//')
+            # If extraction failed or resulted in empty/original filename, fallback to reading content
+            if [ -z "$current_model" ] || [ "$current_model" = "$(basename "$current_config_file")" ]; then
+                current_model=""
+            fi
         fi
+    fi
+
+    # If model not found from symlink name, read from file content
+    if [ -z "$current_model" ] && [ -f "${CONFIG_FILE}" ]; then
+        current_model=$(grep '^model[[:space:]]*=' "${CONFIG_FILE}" | head -1 | sed 's/.*=[[:space:]]*"\([^"]*\)".*/\1/' | tr -d '"')
+    fi
+
+    if [ -n "$current_model" ]; then
+        echo "   Current model: ${current_model}"
     else
         echo "   Current model: Not set"
     fi
@@ -720,7 +786,7 @@ Examples:
     $0 info             Show Codex CLI installation information
     $0 model            Show LLM model list
     $0 model kimi-k2    Set LLM model to kimi-k2
-    $0 mcp              Show MCP service list
+    $0 mcp              Show MCP service list (interactive, 0 to disable all)
     $0 mcp gerrit,git   Set MCP services to gerrit and git
     $0 agent            Show Agent template list
     $0 agent android    Set Agent template to android

@@ -487,6 +487,57 @@ test_set_mcp() {
     export CONFIG_DIR="$TEST_CONFIG_DIR"
     export CONFIG_FILE="$TEST_CONFIG_DIR/config.toml"
 
+    # Test that symlink is preserved after setting MCP servers
+    # First, create a proper model config file
+    echo "model = \"kimi-k2\"" > "$TEST_CONFIG_DIR/config.toml.kimi-k2"
+    echo "model_provider = \"litellm\"" >> "$TEST_CONFIG_DIR/config.toml.kimi-k2"
+
+    # Create symlink to it
+    rm -f "$CONFIG_FILE"
+    ln -sf "$TEST_CONFIG_DIR/config.toml.kimi-k2" "$CONFIG_FILE"
+
+    if [ ! -L "$CONFIG_FILE" ]; then
+        print_test_result "set_mcp test setup (symlink exists)" "FAIL" "Initial symlink not created"
+    else
+        # Set MCP servers
+        set_mcp "git" >/dev/null 2>&1
+
+        # Verify the symlink is still a symlink
+        if [ -L "$CONFIG_FILE" ]; then
+            # Verify the symlink still points to the same target
+            local link_target
+            link_target=$(readlink "$CONFIG_FILE")
+            if [[ "$link_target" == *"config.toml.kimi-k2"* ]]; then
+                print_test_result "set_mcp preserves symlink" "PASS"
+            else
+                print_test_result "set_mcp preserves symlink" "FAIL" "Symlink target changed to: $link_target"
+            fi
+        else
+            print_test_result "set_mcp preserves symlink" "FAIL" "Symlink was converted to regular file"
+        fi
+
+        # Verify model configuration is still in the target file
+        local actual_file
+        if [ -L "$CONFIG_FILE" ]; then
+            actual_file=$(readlink -f "$CONFIG_FILE")
+        else
+            actual_file="$CONFIG_FILE"
+        fi
+
+        if grep -q 'model = "kimi-k2"' "$actual_file"; then
+            print_test_result "set_mcp preserves model config" "PASS"
+        else
+            print_test_result "set_mcp preserves model config" "FAIL" "Model configuration lost"
+        fi
+
+        # Verify MCP servers were added to the target file
+        if grep -q '\[mcp_servers.git\]' "$actual_file"; then
+            print_test_result "set_mcp adds MCP to target file" "PASS"
+        else
+            print_test_result "set_mcp adds MCP to target file" "FAIL" "MCP configuration not added"
+        fi
+    fi
+
     # Create a base config file first
     echo "# Base config" > "$CONFIG_FILE"
     echo "model = \"test-model\"" >> "$CONFIG_FILE"
@@ -619,6 +670,96 @@ test_set_mcp() {
         print_test_result "set_mcp does not include trailing section comments" "PASS"
     else
         print_test_result "set_mcp does not include trailing section comments" "FAIL" "Trailing comments found (git_section: $has_git_section, docker_comment: $has_docker_comment)"
+    fi
+}
+
+# Test disable_all_mcp function
+test_disable_all_mcp() {
+    echo -e "TEST: Testing disable_all_mcp function..."
+
+    # Load function definitions only, don't execute main function
+    source <(head -n -1 "$CODEX_SCRIPT")
+
+    # Re-export after sourcing to ensure correct values
+    export CONFIG_DIR="$TEST_CONFIG_DIR"
+    export CONFIG_FILE="$TEST_CONFIG_DIR/config.toml"
+
+    # Create a config file with model and MCP servers
+    echo "# Base config" > "$CONFIG_FILE"
+    echo "model = \"test-model\"" >> "$CONFIG_FILE"
+    echo "model_provider = \"litellm\"" >> "$CONFIG_FILE"
+    echo "" >> "$CONFIG_FILE"
+    echo "[mcp_servers.filesystem]" >> "$CONFIG_FILE"
+    echo "command = \"docker\"" >> "$CONFIG_FILE"
+    echo "enabled = true" >> "$CONFIG_FILE"
+    echo "" >> "$CONFIG_FILE"
+    echo "[mcp_servers.git]" >> "$CONFIG_FILE"
+    echo "command = \"docker\"" >> "$CONFIG_FILE"
+    echo "enabled = true" >> "$CONFIG_FILE"
+
+    # Disable all MCP servers
+    if disable_all_mcp >/dev/null 2>&1; then
+        print_test_result "disable_all_mcp executes successfully" "PASS"
+    else
+        print_test_result "disable_all_mcp executes successfully" "FAIL" "Function returned error"
+    fi
+
+    # Verify all MCP sections are removed
+    local has_mcp_sections
+    has_mcp_sections=$(grep -c '^\[mcp_servers\.' "$CONFIG_FILE" 2>/dev/null)
+    has_mcp_sections=${has_mcp_sections:-0}
+
+    if [ "$has_mcp_sections" = "0" ]; then
+        print_test_result "disable_all_mcp removes all MCP sections" "PASS"
+    else
+        print_test_result "disable_all_mcp removes all MCP sections" "FAIL" "Found $has_mcp_sections MCP sections"
+    fi
+
+    # Verify model configuration is preserved
+    if grep -q 'model = "test-model"' "$CONFIG_FILE"; then
+        print_test_result "disable_all_mcp preserves model config" "PASS"
+    else
+        print_test_result "disable_all_mcp preserves model config" "FAIL" "Model configuration lost"
+    fi
+
+    # Test with symlink
+    echo "model = \"kimi-k2\"" > "$TEST_CONFIG_DIR/config.toml.kimi-k2"
+    echo "model_provider = \"litellm\"" >> "$TEST_CONFIG_DIR/config.toml.kimi-k2"
+    echo "" >> "$TEST_CONFIG_DIR/config.toml.kimi-k2"
+    echo "[mcp_servers.gerrit]" >> "$TEST_CONFIG_DIR/config.toml.kimi-k2"
+    echo "command = \"docker\"" >> "$TEST_CONFIG_DIR/config.toml.kimi-k2"
+    echo "enabled = true" >> "$TEST_CONFIG_DIR/config.toml.kimi-k2"
+
+    rm -f "$CONFIG_FILE"
+    ln -sf "$TEST_CONFIG_DIR/config.toml.kimi-k2" "$CONFIG_FILE"
+
+    # Disable all MCP servers
+    disable_all_mcp >/dev/null 2>&1
+
+    # Verify symlink is preserved
+    if [ -L "$CONFIG_FILE" ]; then
+        print_test_result "disable_all_mcp preserves symlink" "PASS"
+    else
+        print_test_result "disable_all_mcp preserves symlink" "FAIL" "Symlink was converted to regular file"
+    fi
+
+    # Verify MCP sections are removed from target file
+    local actual_file
+    actual_file=$(readlink -f "$CONFIG_FILE")
+    has_mcp_sections=$(grep -c '^\[mcp_servers\.' "$actual_file" 2>/dev/null)
+    has_mcp_sections=${has_mcp_sections:-0}
+
+    if [ "$has_mcp_sections" = "0" ]; then
+        print_test_result "disable_all_mcp removes MCP from symlink target" "PASS"
+    else
+        print_test_result "disable_all_mcp removes MCP from symlink target" "FAIL" "Found $has_mcp_sections MCP sections in target"
+    fi
+
+    # Verify model is preserved in target file
+    if grep -q 'model = "kimi-k2"' "$actual_file"; then
+        print_test_result "disable_all_mcp preserves model in symlink target" "PASS"
+    else
+        print_test_result "disable_all_mcp preserves model in symlink target" "FAIL" "Model configuration lost in target"
     fi
 }
 
@@ -918,13 +1059,38 @@ test_show_info() {
         print_test_result "show_info displays current configuration" "FAIL" "Current configuration section not found"
     fi
 
-    # Test with model set
+    # Test with model set (symlink approach - standard naming)
     ln -sf "$TEST_CONFIG_DIR/config.toml.kimi-k2" "$CONFIG_FILE"
     info_output=$(show_info 2>/dev/null)
     if echo "$info_output" | grep -q "Current model:.*kimi-k2"; then
-        print_test_result "show_info displays current model" "PASS"
+        print_test_result "show_info displays current model (from symlink name)" "PASS"
     else
-        print_test_result "show_info displays current model" "FAIL" "Current model not shown correctly"
+        print_test_result "show_info displays current model (from symlink name)" "FAIL" "Current model not shown correctly"
+    fi
+
+    # Test with model set (symlink with non-standard naming - fallback to content)
+    local custom_config="$TEST_CONFIG_DIR/custom_model_config.toml"
+    echo "# Custom model config" > "$custom_config"
+    echo "model = \"nebulacoder-cot-latest\"" >> "$custom_config"
+    echo "model_provider = \"litellm\"" >> "$custom_config"
+    rm -f "$CONFIG_FILE"
+    ln -sf "$custom_config" "$CONFIG_FILE"
+    info_output=$(show_info 2>/dev/null)
+    if echo "$info_output" | grep -q "Current model:.*nebulacoder-cot-latest"; then
+        print_test_result "show_info displays current model (symlink, from content)" "PASS"
+    else
+        print_test_result "show_info displays current model (symlink, from content)" "FAIL" "Current model not read from file content"
+    fi
+
+    # Test with regular file (after MCP is set - no longer a symlink)
+    echo "# Regular config file" > "$CONFIG_FILE"
+    echo "model = \"test-model-regular\"" >> "$CONFIG_FILE"
+    echo "model_provider = \"litellm\"" >> "$CONFIG_FILE"
+    info_output=$(show_info 2>/dev/null)
+    if echo "$info_output" | grep -q "Current model:.*test-model-regular"; then
+        print_test_result "show_info displays current model (regular file)" "PASS"
+    else
+        print_test_result "show_info displays current model (regular file)" "FAIL" "Current model not read from regular file"
     fi
 
     # Test with MCP servers enabled
@@ -1052,6 +1218,7 @@ run_all_tests() {
     test_query_mcp
     test_list_mcp
     test_set_mcp
+    test_disable_all_mcp
     test_interactive_mcp_selection
     test_mcp_config_parsing
     test_mcp_enabled_update
@@ -1095,6 +1262,7 @@ main() {
             echo "  query_mcp          - Test MCP configuration query function"
             echo "  list_mcp           - Test MCP list function"
             echo "  set_mcp            - Test MCP setting function"
+            echo "  disable_all_mcp    - Test disable all MCP servers function"
             echo "  interactive_mcp    - Test interactive MCP selection"
             echo "  mcp_config_parsing - Test MCP configuration parsing"
             echo "  mcp_enabled_update - Test MCP enabled status update"
@@ -1144,6 +1312,11 @@ main() {
         "set_mcp")
             setup_test_env
             test_set_mcp
+            cleanup_test_env
+            ;;
+        "disable_all_mcp")
+            setup_test_env
+            test_disable_all_mcp
             cleanup_test_env
             ;;
         "interactive_mcp")

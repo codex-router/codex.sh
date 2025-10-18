@@ -5,6 +5,7 @@ This is a one-stop installer and manager for the Codex CLI and its model configu
 It supports:
 - Installing/uninstalling the Codex CLI
 - Downloading and switching LLM model configs
+- Managing MCP (Model Context Protocol) servers with multi-select support
 - Updating the CLI and self-upgrading this script
 - Showing install status and versions
 
@@ -53,11 +54,15 @@ Tip: Update the placeholder key in ~/.bashrc (LITELLM_API_KEY=sk-1234) to your r
 # Set a model
 ./codex.sh model <model_name>
 
-# List MCP servers and interactively pick one
+# List MCP servers and interactively pick one (or multiple, or 0 to disable all)
 ./codex.sh mcp
 
-# Set MCP server
+# Set one or more MCP servers (comma-separated)
 ./codex.sh mcp <mcp_name>
+./codex.sh mcp <mcp_name1>,<mcp_name2>,<mcp_name3>
+
+# Example: Enable multiple MCP servers at once
+./codex.sh mcp gerrit,git
 
 # Uninstall everything the script installed/added
 ./codex.sh uninstall
@@ -69,8 +74,11 @@ The script supports Model Context Protocol (MCP) servers, which provide addition
 
 - MCP server configurations are automatically downloaded during `install` or `update`
 - Configurations are stored in `~/.codex/mcp_servers.toml`
-- Use `./codex.sh mcp` to list available MCP configurations
-- Use `./codex.sh mcp <mcp_name>` to apply a configuration
+- Use `./codex.sh mcp` to list available MCP configurations interactively
+- **Multi-select support**: Select multiple MCP servers by entering comma-separated numbers (e.g., `1,3,5`)
+- **Disable all**: Enter `0` in the interactive menu to disable all MCP servers
+- Use `./codex.sh mcp <mcp_name>` to apply a single configuration
+- Use `./codex.sh mcp <mcp1>,<mcp2>` to enable multiple MCP servers at once
 - MCP settings are merged into your active `config.toml`
 - Supported MCP types include STDIO servers (Docker-based) and HTTP servers
 - MCP configurations are automatically updated when running `./codex.sh update`
@@ -78,6 +86,8 @@ The script supports Model Context Protocol (MCP) servers, which provide addition
 Example MCP servers:
 - **code2prompt**: Converts codebase to prompts via Docker
 - **docker**: Provides containerized project operations
+- **gerrit**: Gerrit code review integration
+- **git**: Git repository operations
 - **custom_api**: HTTP-based MCP servers with bearer token authentication
 
 **Important**: After setting an MCP configuration, ensure you set any required environment variables (like API tokens) in your shell environment.
@@ -106,12 +116,15 @@ Example MCP servers:
 
 - Model not listed or selection fails
 	- Re-run `./codex.sh update` to re-download models.
+	- Note: Running update will prompt for confirmation and remove old configurations before updating.
 
 - MCP configuration issues
 	- Ensure you've run `./codex.sh update` to download latest MCP configurations.
 	- Check that required environment variables (API tokens, etc.) are set.
 	- MCP servers require their respective tools (Docker for STDIO servers, network access for HTTP servers).
-	- Use `./codex.sh mcp` to see available configurations.
+	- Use `./codex.sh mcp` to see available configurations and their enabled status.
+	- To disable all MCP servers, use the interactive menu and enter `0`.
+	- You can enable multiple MCP servers at once: `./codex.sh mcp server1,server2,server3`
 	- If MCP configurations seem outdated, run `./codex.sh update` to refresh them from the repository.
 
 - Self-upgrade issues
